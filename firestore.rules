@@ -1,0 +1,128 @@
+rules_version = '2';
+
+/**
+ * Rai$e Family — firestore.rules
+ *
+ * Modelo de acesso: app familiar fechado, sem multi-tenant. Qualquer
+ * membro autorizado (ver `members/{uid}` abaixo) lê e escreve
+ * praticamente tudo — mesmo nível de permissão que o sistema atual
+ * (Apps Script), onde qualquer usuário logado enxerga o app inteiro.
+ *
+ * POR QUE A COLEÇÃO "members" EXISTE:
+ * O Firebase Authentication com e-mail/senha permite que QUALQUER
+ * pessoa com acesso ao firebaseConfig do site (que é público, não é
+ * segredo) crie uma conta chamando createUserWithEmailAndPassword.
+ * Se as regras liberassem tudo com `request.auth != null`, essa conta
+ * estranha teria acesso total aos dados da família. `members/{uid}`
+ * funciona como lista de permissão explícita: ter conta no Auth não
+ * basta, precisa também ter um documento aqui — e essa coleção nunca
+ * é gravável por um UID que ainda não está nela (impede
+ * autopromoção). O primeiro membro é criado direto via Admin SDK no
+ * script de migração (fora do alcance destas regras); a partir daí,
+ * qualquer membro já existente pode adicionar um novo.
+ *
+ * POR QUE "delete" É SEMPRE PROIBIDO:
+ * Mesma filosofia do sistema atual — nenhuma entidade é apagada de
+ * verdade, só marcada com um campo "deleted: true" (via update). Isso
+ * preserva histórico (ex: material de uma task antiga, pagamento de
+ * uma cobrança já quitada) e é reforçado aqui na regra, não só por
+ * convenção do código cliente.
+ */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isMember() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/members/$(request.auth.uid));
+    }
+
+    // Conta mestre: definida pelo documento meta/master (campo `uid`),
+    // criado À MÃO no Console do Firebase (ver match /meta abaixo).
+    // O exists() evita erro de avaliação enquanto o documento não existir
+    // — nesse caso ninguém é mestre e só vale a regra "cada um edita o
+    // próprio perfil".
+    function isMaster() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/meta/master) &&
+        get(/databases/$(database)/documents/meta/master).data.uid == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------
+    // Allowlist de acesso — ver explicação acima.
+    // ---------------------------------------------------------------
+    match /members/{uid} {
+      allow read: if isMember();
+      allow create: if isMember();
+      allow update, delete: if false;
+    }
+
+    // Perfil de exibição (nome, cor, ícone). Qualquer membro lê todos
+    // (precisa mostrar nome/ícone de todo mundo nas listas); cada um
+    // edita só o próprio perfil, EXCETO a conta mestre, que edita (e
+    // desativa, via user_deleted) qualquer perfil.
+    match /users/{uid} {
+      allow read: if isMember();
+      allow create: if isMember(); // criado junto com members/{uid}
+      allow update: if isMember() && (request.auth.uid == uid || isMaster());
+      allow delete: if false;
+    }
+
+    // Metadados do app (hoje só meta/master = { uid: "<UID da conta mestre>" }).
+    // Membros leem; NINGUÉM escreve pelo app — só pelo Console do Firebase
+    // (que ignora estas regras), o que impede qualquer autopromoção.
+    match /meta/{docId} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
+    // Documento único de preferências (tema, idioma, cortes de status
+    // financeiro) — substitui a aba SETTINGS de chave/valor.
+    match /settings/{docId} {
+      allow read, update: if isMember();
+      allow create, delete: if false; // criado uma única vez, na migração
+    }
+
+    // Contadores de ID sequencial (substituem next_*_id). A condição
+    // no update impede qualquer client de pular IDs ou zerar/reduzir
+    // o contador — só é permitido avançar exatamente +1 por escrita.
+    match /counters/{name} {
+      allow read: if isMember();
+      allow update: if isMember() &&
+        request.resource.data.value == resource.data.value + 1;
+      allow create, delete: if false;
+    }
+
+    // ---------------------------------------------------------------
+    // Setor Finance — cadastros simples (mesmo padrão do CrudPage
+    // genérico do front hoje: qualquer membro lê/cria/edita).
+    // ---------------------------------------------------------------
+    match /categories/{id}  { allow read, create, update: if isMember(); allow delete: if false; }
+    match /payMethods/{id}  { allow read, create, update: if isMember(); allow delete: if false; }
+    match /reserves/{id}    { allow read, create, update: if isMember(); allow delete: if false; }
+
+    // Movimentos de reserva (depósitos/retiradas) — escopo próprio, sem relação
+    // com transações. O contador next_reserve_movement_id precisa existir em
+    // /counters (criado à mão no Console, value = 0).
+    match /reserveMovements/{id} { allow read, create, update: if isMember(); allow delete: if false; }
+
+    match /transactions/{id}   { allow read, create, update: if isMember(); allow delete: if false; }
+    match /charges/{id}        { allow read, create, update: if isMember(); allow delete: if false; }
+    match /chargePayments/{id} { allow read, create, update: if isMember(); allow delete: if false; }
+    match /fixedCharges/{id}   { allow read, create, update: if isMember(); allow delete: if false; }
+
+    // ---------------------------------------------------------------
+    // Setor Task — mesmo padrão, isolado do Finance (só referencia
+    // users/{uid} via campo "user", igual hoje).
+    // ---------------------------------------------------------------
+    match /stages/{id}    { allow read, create, update: if isMember(); allow delete: if false; }
+    match /tasks/{id}     { allow read, create, update: if isMember(); allow delete: if false; }
+    match /materials/{id} { allow read, create, update: if isMember(); allow delete: if false; }
+    match /tools/{id}     { allow read, create, update: if isMember(); allow delete: if false; }
+    match /videos/{id}    { allow read, create, update: if isMember(); allow delete: if false; }
+    match /articles/{id}  { allow read, create, update: if isMember(); allow delete: if false; }
+
+    // Qualquer coisa não listada acima é negada por padrão (comportamento
+    // implícito do Firestore quando nenhuma regra "match" corresponde).
+  }
+}
