@@ -83,13 +83,18 @@ service cloud.firestore {
       allow create, delete: if false; // criado uma única vez, na migração
     }
 
-    // Contadores de ID sequencial (substituem next_*_id). A condição
-    // no update impede qualquer client de pular IDs ou zerar/reduzir
-    // o contador — só é permitido avançar exatamente +1 por escrita.
+    // Contadores de ID sequencial (substituem next_*_id). O contador só pode
+    // AVANÇAR: de 1 a 500 numa única escrita (nunca zerar nem retroceder).
+    // A faixa de até 500 permite "reservar em bloco" os IDs de várias linhas
+    // gravadas juntas (ex.: os itens de uma compra do Shop) numa só ida ao
+    // servidor — antes só +1 por escrita era aceito. Pular números não causa
+    // problema (já acontece quando uma operação é abortada).
+    // ORDEM DE PUBLICAÇÃO: estas regras ANTES do site que usa Db.nextIds.
     match /counters/{name} {
       allow read: if isMember();
       allow update: if isMember() &&
-        request.resource.data.value == resource.data.value + 1;
+        request.resource.data.value > resource.data.value &&
+        request.resource.data.value <= resource.data.value + 500;
       allow create, delete: if false;
     }
 
@@ -121,6 +126,21 @@ service cloud.firestore {
     match /tools/{id}     { allow read, create, update: if isMember(); allow delete: if false; }
     match /videos/{id}    { allow read, create, update: if isMember(); allow delete: if false; }
     match /articles/{id}  { allow read, create, update: if isMember(); allow delete: if false; }
+
+    // ---------------------------------------------------------------
+    // Setor Shop — listas de compras, itens, compras finalizadas, preços e
+    // presentes. Mesmo padrão: membros leem/criam/atualizam; nunca apagam.
+    // Contadores necessários em /counters (value = 0): next_shop_item_id,
+    // next_shop_list_id, next_shop_list_item_id, next_shop_purchase_id,
+    // next_shop_purchase_item_id, next_gift_person_id, next_gift_item_id.
+    // ---------------------------------------------------------------
+    match /shopItems/{id}         { allow read, create, update: if isMember(); allow delete: if false; }
+    match /shopLists/{id}         { allow read, create, update: if isMember(); allow delete: if false; }
+    match /shopListItems/{id}     { allow read, create, update: if isMember(); allow delete: if false; }
+    match /shopPurchases/{id}     { allow read, create, update: if isMember(); allow delete: if false; }
+    match /shopPurchaseItems/{id} { allow read, create, update: if isMember(); allow delete: if false; }
+    match /giftPeople/{id}        { allow read, create, update: if isMember(); allow delete: if false; }
+    match /giftItems/{id}         { allow read, create, update: if isMember(); allow delete: if false; }
 
     // Qualquer coisa não listada acima é negada por padrão (comportamento
     // implícito do Firestore quando nenhuma regra "match" corresponde).
