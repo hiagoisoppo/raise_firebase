@@ -132,13 +132,19 @@ service cloud.firestore {
     // presentes. Mesmo padrão: membros leem/criam/atualizam; nunca apagam.
     // Contadores necessários em /counters (value = 0): next_shop_item_id,
     // next_shop_list_id, next_shop_list_item_id, next_shop_purchase_id,
-    // next_shop_purchase_item_id, next_gift_person_id, next_gift_item_id.
+    // next_shop_purchase_item_id, next_shop_file_id, next_shop_recipe_id, next_gift_person_id, next_gift_item_id.
     // ---------------------------------------------------------------
     match /shopItems/{id}         { allow read, create, update: if isMember(); allow delete: if false; }
     match /shopLists/{id}         { allow read, create, update: if isMember(); allow delete: if false; }
     match /shopListItems/{id}     { allow read, create, update: if isMember(); allow delete: if false; }
     match /shopPurchases/{id}     { allow read, create, update: if isMember(); allow delete: if false; }
     match /shopPurchaseItems/{id} { allow read, create, update: if isMember(); allow delete: if false; }
+    // Receitas (ingredientes e etapas dentro do próprio documento). Sem exclusão física.
+    match /shopRecipes/{id}       { allow read, create, update: if isMember(); allow delete: if false; }
+    // Fotos de notas fiscais (cache até o dono enviar ao Drive). Um documento por foto, até 1 MiB.
+    match /shopFiles/{id}         { allow read: if isMember();
+                                    allow create, update: if isMember() && request.resource.data.file_data.size() < 950000;
+                                    allow delete: if false; }
     match /giftPeople/{id}        { allow read, create, update: if isMember(); allow delete: if false; }
     match /giftItems/{id}         { allow read, create, update: if isMember(); allow delete: if false; }
 
